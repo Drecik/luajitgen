@@ -1270,6 +1270,10 @@ LUA_API int lua_gc(lua_State *L, int what, int data)
   case LUA_GCISRUNNING:
     res = (g->gc.threshold != LJ_MAX_MEM);
     break;
+  case 10:
+    return g->gc.state;
+  case 11:
+    return g->gc.threshold;
   default:
     res = -1;  /* Invalid option. */
   }
