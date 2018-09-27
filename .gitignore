@@ -1,0 +1,4 @@
+*.o
+luajit
+libluajit.a
+libluajit.so
