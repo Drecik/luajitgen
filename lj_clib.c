@@ -56,6 +56,7 @@ LJ_NORET LJ_NOINLINE static void clib_error_(lua_State *L)
 
 static const char *clib_extname(lua_State *L, const char *name)
 {
+  if (name[0] == 0) return NULL;
   if (!strchr(name, '/')
 #if LJ_TARGET_CYGWIN
       && !strchr(name, '\\')
