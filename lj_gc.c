@@ -674,7 +674,7 @@ static size_t gc_onestep(lua_State *L)
 }
 
 /* Perform a limited amount of incremental GC steps. */
-int LJ_FASTCALL lj_gc_step(lua_State *L)
+static int incstep(lua_State *L)
 {
   global_State *g = G(L);
   GCSize lim;
@@ -756,6 +756,46 @@ static void sweep2old(lua_State *L, GCRef *p) {
 }
 
 /*
+** Sweep for generational mode. Delete dead objects. (Because the
+** collection is not incremental, there are no "new white" objects
+** during the sweep. So, any white object must be dead.) For
+** non-dead objects, advance their ages and clear the color of
+** new objects. (Old objects keep their colors.)
+*/
+static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
+
+  static uint8_t nextage[] = {
+    G_SURVIVAL,  /* from G_NEW */
+    G_OLD1,      /* from G_SURVIVAL */
+    G_OLD1,      /* from G_OLD0 */
+    G_OLD,       /* from G_OLD1 */
+    G_OLD,       /* from G_OLD (do not change) */
+    G_TOUCHED1,  /* from G_TOUCHED1 (do not change) */
+    G_TOUCHED2   /* from G_TOUCHED2 (do not change) */
+  };
+
+  GCobj *o;
+  GCobj *objlimit = gcref(limit);
+  while ((o = gcref(*p)) != objlimit) {
+    // TODO: 线程upvalue是否需要特殊处理？
+    if (iswhite(o)) {
+      lua_assert(!isold(o) && isdead(g, o));
+      setgcrefr(*p, o->gch.nextgc);
+      if (o == gcref(g->gc.root))
+	      setgcrefr(g->gc.root, o->gch.nextgc);  /* Adjust list anchor. */
+      gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
+    }
+    else {
+      if (getage(o) == G_NEW)
+        makewhite(g, o);
+      setage(o, nextage[getage(o)]);
+      p = &o->gch.nextgc;
+    }
+  }
+  return p;
+}
+
+/*
 ** Traverse a list making all its elements white and clearing their
 ** age.
 */
@@ -830,13 +870,80 @@ static GCRef *correctgraylist(GCRef *p) {
 }
 
 /*
-** Finish a young-generation collection.
+** Correct all gray lists, coalescing them into 'grayagain'.
 */
-static void finishgencycle(lua_State *L, global_State *g) {
+static void correctgraylists(global_State *g) {
   GCRef *list = correctgraylist(&g->gc.grayagain);
   *list = g->gc.weak;
   setgcrefnull(g->gc.weak);
   correctgraylist(list);
+}
+
+/*
+** Mark 'old1' objects when starting a new young collection.
+** Gray objects are already in some gray list, and so will be visited
+** in the atomic step.
+*/
+static void markold(global_State *g, GCRef from, GCRef to) {
+  GCobj *o;
+  GCobj *toobj = gcref(to);
+  while ((o = gcref(from)) != toobj) {
+    if (getage(o) == G_OLD1) {
+      lua_assert(!iswhilte(o));
+      if (isblack(o)) {
+        black2gray(o);
+        gc_mark(g, o);
+      }
+    }
+    from = toobj->gch.nextgc;
+  }
+}
+
+
+/*
+** call all pending finalizers
+*/
+static void callallpendingfinalizers (lua_State *L) {
+  global_State *g = G(L);
+  while (gcref(g->gc.mmudata) != NULL)
+    gc_finalize(L);
+}
+
+/*
+** Finish a young-generation collection.
+*/
+static void finishgencycle(lua_State *L, global_State *g) {
+  correctgraylists(g);
+  g->gc.state = GCSpropagate;
+  callallpendingfinalizers(L);
+}
+
+/*
+** Does a young collection. First, mark 'old1' objects.  (Only survival
+** and "recent old" lists can contain 'old1' objects. New lists cannot
+** contain 'old1' objects, at most 'old0' objects that were already
+** visited when marked old.) Then does the atomic step. Then,
+** sweep all lists and advance pointers. Finally, finish the collection.
+*/
+static void youngcollection(lua_State *L, global_State *g) {
+  lua_assert(g->gc.state == GCSpropagate);
+  markold(g, g->gc.surival, g->gc.reallyold);
+  markold(g, g->gc.udatasur, g->gc.udatarold);
+  atomic(g, L);
+
+  GCRef *psurvival = sweepgen(L, g, &g->gc.root, g->gc.surival);
+  sweepgen(L, g, psurvival, g->gc.reallyold);
+  g->gc.reallyold = g->gc.old;
+  g->gc.old = *psurvival;
+  g->gc.surival = g->gc.root;
+
+  psurvival = sweepgen(L, g, &L->nextgc, g->gc.udatasur);
+  sweepgen(L, g, psurvival, g->gc.udatarold);
+  g->gc.udatarold = g->gc.udataold;
+  g->gc.udataold = *psurvival;
+  g->gc.udatasur = L->nextgc;
+
+  finishgencycle(L, g);
 }
 
 // 进入到分代模式，进行一次完整的标记操作，之后把所有存活的打上old标记
@@ -867,6 +974,44 @@ static void enterinc(global_State *g) {
   g->gc.kind = KGC_INC;
 }
 
+/*
+** Does a full collection in generational mode.
+*/
+static void fullgen(lua_State *L, global_State *g) {
+  enterinc(g);
+  entergen(L, g);
+}
+
+/*
+** Does a generational "step". If memory grows 'genmajormul'% larger
+** than last major collection (kept in 'g->GCestimate'), does a major
+** collection. Otherwise, does a minor collection and set debt to make
+** another collection when memory grows 'genminormul'% larger.
+** 一次分代gc step，会stop the world直到gc完成;
+** 可以通过genmajormul和genminormul来控制分代full gc和分代young gc的时机;
+*/
+static void genstep(lua_State *L, global_State *g) {
+  MSize majorbase = g->gc.estimate;
+  int majormul = getgcparam(g->gc.genmajormul);
+  if (g->gc.total > g->gc.threshold && g->gc.total > (majorbase / 100) * (100 + majormul))
+    fullgen(L, g);
+  else {
+    youngcollection(L, g);
+    MSize mem = g->gc.total;
+    g->gc.threshold = (mem / 100) * g->gc.genminormul;
+    g->gc.estimate = majorbase;
+  }
+}
+
+int LJ_FASTCALL lj_gc_step(lua_State *L) {
+  global_State *g = G(L);
+  if (g->gc.kind == KGC_INC)
+    return incstep(L);
+  else
+    genstep(L, g);
+  return 1;
+}
+
 // 更改gc模式;
 void lj_gc_changemode(lua_State *L, int newmode) {
   global_State *g = G(L);
@@ -878,10 +1023,7 @@ void lj_gc_changemode(lua_State *L, int newmode) {
   }
 }
 
-/* Perform a full GC cycle. */
-void lj_gc_fullgc(lua_State *L)
-{
-  global_State *g = G(L);
+static void fullinc(lua_State *L, global_State *g) {
   int32_t ostate = g->vmstate;
   setvmstate(g, GC);
   if (g->gc.state <= GCSatomic) {  /* Caught somewhere in the middle. */
@@ -900,6 +1042,16 @@ void lj_gc_fullgc(lua_State *L)
   do { gc_onestep(L); } while (g->gc.state != GCSpause);
   g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
   g->vmstate = ostate;
+}
+
+/* Perform a full GC cycle. */
+void lj_gc_fullgc(lua_State *L)
+{
+  global_State *g = G(L);
+  if (g->gc.kind == KGC_INC)
+    fullinc(L, g);
+  else
+    fullgen(L, g);
 }
 
 /* -- Write barriers ------------------------------------------------------ */
