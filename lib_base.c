@@ -433,22 +433,57 @@ LJLIB_CF(gcinfo)
   return 1;
 }
 
+static int pushmode (lua_State *L, int oldmode) {
+  lua_pushstring(L, (oldmode == LUA_GCINC) ? "incremental" : "generational");
+  return 1;
+}
+
 LJLIB_CF(collectgarbage)
 {
   int opt = lj_lib_checkopt(L, 1, LUA_GCCOLLECT,  /* ORDER LUA_GC* */
-    "\4stop\7restart\7collect\5count\1\377\4step\10setpause\12setstepmul\1\377\11isrunning");
-  int32_t data = lj_lib_optint(L, 2, 0);
-  if (opt == LUA_GCCOUNT) {
-    setnumV(L->top, (lua_Number)G(L)->gc.total/1024.0);
-  } else {
-    int res = lua_gc(L, opt, data);
-    if (opt == LUA_GCSTEP || opt == LUA_GCISRUNNING)
-      setboolV(L->top, res);
-    else
-      setintV(L->top, res);
+    "\4stop\7restart\7collect\5count\1\377\4step\10setpause\12setstepmul\1\377\11isrunning\12generational\11incremental");
+  int res;
+  switch (opt) {
+    case LUA_GCRESTART:
+    case LUA_GCSETPAUSE:
+    case LUA_GCSETSTEPMUL: {
+      int32_t data = luaL_optinteger(L, 2, 0);
+      res = lua_gc(L, opt, data);
+      lua_pushinteger(L, res);
+      return 1;
+    }
+    case LUA_GCCOUNT:{
+      lua_pushnumber(L, (lua_Number)G(L)->gc.total/1024.0);
+      return 1;
+    }
+    case LUA_GCSTEP: {
+      int32_t data = luaL_optinteger(L, 2, 0);
+      res = lua_gc(L, opt, data);
+      lua_pushboolean(L, res);
+      return 1;
+    }
+    case LUA_GCISRUNNING: {
+      res = lua_gc(L, opt);
+      lua_pushboolean(L, res);
+      return 1;
+    }
+    case LUA_GCGEN: {
+      int minormul = (int)luaL_optinteger(L, 2, 0);
+      int majormul = (int)luaL_optinteger(L, 3, 0);
+      return pushmode(L, lua_gc(L, opt, minormul, majormul));
+    }
+    case LUA_GCINC: {
+      int pause = (int)luaL_optinteger(L, 2, 0);
+      int stepmul = (int)luaL_optinteger(L, 3, 0);
+      int stepsize = (int)luaL_optinteger(L, 4, 0);
+      return pushmode(L, lua_gc(L, opt, pause, stepmul, stepsize));
+    }
+    default: {
+      res = lua_gc(L, opt);
+      lua_pushinteger(L, res);
+      return 1;
+    }
   }
-  L->top++;
-  return 1;
 }
 
 /* -- Base library: miscellaneous functions ------------------------------- */

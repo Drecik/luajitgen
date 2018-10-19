@@ -726,6 +726,25 @@ int LJ_FASTCALL lj_gc_step_jit(global_State *g, MSize steps)
 }
 #endif
 
+static void entergen(lua_State *L, global_State *g) {
+
+}
+
+static void enterinc(global_State *g) {
+  
+}
+
+// 更改gc模式;
+void lj_gc_changemode(lua_State *L, int newmode) {
+  global_State *g = G(L);
+  if (newmode != g->gc.kind) {
+    if (newmode == KGC_GEN)
+      entergen(L, g);
+    else
+      enterinc(g);
+  }
+}
+
 /* Perform a full GC cycle. */
 void lj_gc_fullgc(lua_State *L)
 {

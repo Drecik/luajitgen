@@ -165,4 +165,6 @@ static LJ_AINLINE void lj_mem_free(global_State *g, void *p, size_t osize)
 #define lj_mem_newt(L, s, t)	((t *)lj_mem_new(L, (s)))
 #define lj_mem_freet(g, p)	lj_mem_free(g, (p), sizeof(*(p)))
 
+LJ_FUNC void lj_gc_changemode(lua_State *L, int newmode);
+
 #endif
