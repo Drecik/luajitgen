@@ -56,7 +56,7 @@ typedef struct GCRef {
 } GCRef;
 
 /* Common GC header for all collectable objects. */
-#define GCHeader	GCRef nextgc; uint8_t marked; uint8_t gct
+#define GCHeader	GCRef nextgc; uint8_t marked; uint8_t gct; uint8_t age
 /* This occupies 6 bytes, so use the next 2 bytes for non-32 bit fields. */
 
 #if LJ_GC64
@@ -570,6 +570,10 @@ typedef enum {
 #define basemt_obj(g, o)	((g)->gcroot[GCROOT_BASEMT+itypemap(o)])
 #define mmname_str(g, mm)	(strref((g)->gcroot[GCROOT_MMNAME+(mm)]))
 
+/* kinds of Garbage Collection */
+#define KGC_INC		0	/* incremental gc */
+#define KGC_GEN		1	/* generational gc */
+
 typedef struct GCState {
   GCSize total;		/* Memory currently allocated. */
   GCSize threshold;	/* Memory threshold. */
@@ -588,6 +592,15 @@ typedef struct GCState {
   GCSize estimate;	/* Estimate of memory actually in use. */
   MSize stepmul;	/* Incremental GC step granularity. */
   MSize pause;		/* Pause between successive GC cycles. */
+  uint8_t kind;   // gc类型，分代还是分步？
+  uint8_t genminormul;  // 分代模式young gc参数;
+  uint8_t genmajormul;  // 分代模式full gc参数;
+  GCRef surival;  // 当前gc存活的对象链表开始位置;
+  GCRef old;    // 上一轮存活下来的对象链表开始位置;
+  GCRef reallyold; // 标记为old的对象链表开始位置;
+  GCRef udatasur;  // 当前存活的userdata对象链表开始位置;
+  GCRef udataold;  // 上一轮存活的userdata对象链表开始位置;
+  GCRef udatarold; // 标记为old的userdata对象链表开始位置;
 } GCState;
 
 /* Global state, shared by all threads of a Lua universe. */

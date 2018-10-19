@@ -45,6 +45,40 @@ enum {
 #define fixstring(s)	((s)->marked |= LJ_GC_FIXED)
 #define markfinalized(x)	((x)->gch.marked |= LJ_GC_FINALIZED)
 
+/* object age in generational mode */
+#define G_NEW		0	/* created in current cycle */						// 当前gc循环所创建的对象;
+#define G_SURVIVAL	1	/* created in previous cycle */						// 当前gc存活下来的对象;
+#define G_OLD0		2	/* marked old by frw. barrier in this cycle */		// 当前gc循环被barrier forward的节点，如果被插入的节点为isold()为true的节点;
+#define G_OLD1		3	/* first full cycle as old */						// 活过了一次完整的gc;
+#define G_OLD		4	/* really old object (not to be visited) */			// 活过了两次完整的gc，标记为G_OLD，不在被访问;
+#define G_TOUCHED1	5	/* old object touched this cycle */					// old节点被插入新节点;
+#define G_TOUCHED2	6	/* old object touched in previous cycle */			// G_TOUCHED1节点经过一次完整的gc还没有新的节点插入;
+
+#define getage(o)	((o)->age)
+#define setage(o,a)  ((o)->age = (a))
+#define isold(o)	(getage(o) > G_SURVIVAL)		// 大于G_SURVIVAL都为old;
+
+// 开启lua_assert模式下会先判断age是否为f状态，之后在赋值;
+#define changeage(o,f,t)  \
+	check_exp(getage(o) == (f), (o)->marked = (t))
+
+  /* Default Values for GC parameters */
+// 分步gc默认参数;
+#define LUAI_GENMAJORMUL         100
+#define LUAI_GENMINORMUL         20
+
+/* wait memory to double before starting new cycle */
+// 分步gc暂停默认参数;
+#define LUAI_GCPAUSE    200     /* 200% */
+
+/*
+** some gc parameters are stored divided by 4 to allow a maximum value
+** larger than 1000 in a 'lu_byte'.
+*/
+// 为了使一些gc参数能存储更大的值的优化，存的时候/4，获取的时候再*4，这样会丢失一部分精度;
+#define getgcparam(p)	((p) * 4)
+#define setgcparam(p,v)	((p) = (v) / 4)
+
 /* Collector. */
 LJ_FUNC size_t lj_gc_separateudata(global_State *g, int all);
 LJ_FUNC void lj_gc_finalize_udata(lua_State *L);
