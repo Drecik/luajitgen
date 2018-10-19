@@ -54,13 +54,13 @@ enum {
 #define G_TOUCHED1	5	/* old object touched this cycle */					// old节点被插入新节点;
 #define G_TOUCHED2	6	/* old object touched in previous cycle */			// G_TOUCHED1节点经过一次完整的gc还没有新的节点插入;
 
-#define getage(o)	((o)->age)
-#define setage(o,a)  ((o)->age = (a))
+#define getage(o)	((o)->gch.age)
+#define setage(o,a)  ((o)->gch.age = (a))
 #define isold(o)	(getage(o) > G_SURVIVAL)		// 大于G_SURVIVAL都为old;
 
 // 开启lua_assert模式下会先判断age是否为f状态，之后在赋值;
 #define changeage(o,f,t)  \
-	check_exp(getage(o) == (f), (o)->marked = (t))
+	check_exp(getage(o) == (f), (o)->gch.age = (t))
 
   /* Default Values for GC parameters */
 // 分步gc默认参数;

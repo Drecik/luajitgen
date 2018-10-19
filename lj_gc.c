@@ -726,12 +726,145 @@ int LJ_FASTCALL lj_gc_step_jit(global_State *g, MSize steps)
 }
 #endif
 
-static void entergen(lua_State *L, global_State *g) {
+/*
+** {======================================================
+** Generational Collector
+** =======================================================
+*/
 
+/*
+** Sweep a list of objects, deleting dead ones and turning
+** the non dead to old (without changing their colors).
+*/
+static void sweep2old(lua_State *L, GCRef *p) {
+  GCobj *o;
+  global_State *g = G(L);
+  while ((o = gcref(*p)) != NULL) {
+    // TODO: 线程upvalue是否需要特殊处理？
+    if (iswhite(o)) {
+      lua_assert(isdead(G(L), o));
+      setgcrefr(*p, o->gch.nextgc);
+      if (o == gcref(g->gc.root))
+	      setgcrefr(g->gc.root, o->gch.nextgc);  /* Adjust list anchor. */
+      gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
+    }
+    else {
+      setage(o, G_OLD);
+      p = &o->gch.nextgc;
+    }
+  }
+}
+
+/*
+** Traverse a list making all its elements white and clearing their
+** age.
+*/
+static void whitelist(global_State *g, GCRef p) {
+  GCobj *o;
+  while ((o = gcref(p)) != NULL) {
+    makewhite(g, o);
+    setage(o, G_NEW);
+  }
+}
+
+static void whiltestrings(global_State *g) {
+  int i = 0;
+  for (; i < g->strmask; ++i) {
+    whitelist(g, g->strhash[i]);
+  }
+}
+
+/*
+** advances the garbage collector until it reaches a state allowed
+** by 'statemask'
+** 一直执行分步操作，直到到达想要的状态;
+*/
+void lj_gc_runtilstate (lua_State *L, int state) {
+  global_State *g = G(L);
+  while (g->gc.state != state)
+    gc_onestep(L);
+}
+
+/*
+** Correct a list of gray objects. Because this correction is
+** done after sweeping, young objects can be white and still
+** be in the list. They are only removed.
+** For tables and userdata, advance 'touched1' to 'touched2'; 'touched2'
+** objects become regular old and are removed from the list.
+** For threads, just remove white ones from the list.
+*/
+static GCRef *correctgraylist(GCRef *p) {
+  GCobj *o;
+  while ((o = gcref(*p)) != NULL) {
+    switch (~o->gch.gct) {
+      case LUA_TTABLE: case LUA_TUSERDATA: {
+        if (getage(o) == G_TOUCHED1) {
+          lua_assert(isgray(o));
+          gray2black(o);
+          changeage(o, G_TOUCHED1, G_TOUCHED2);
+          p = &o->gch.gclist;
+        }
+        else {
+          if (!iswhite(o)) {
+            lua_assert(isold(o));
+            if (getage(o) == G_TOUCHED2)
+              changeage(o, G_TOUCHED2, G_OLD);
+            gray2black(o);
+          }
+          *p = o->gch.gclist;
+        }
+        break;
+      }
+      case LUA_TTHREAD: {
+        lua_assert(!isblack(th));
+        if (iswhite(o))
+          *p = o->gch.gclist;
+        else
+          p = &o->gch.gclist;
+        break;
+      }
+      default: lua_assert(0);
+    }
+  }
+  return p;
+}
+
+/*
+** Finish a young-generation collection.
+*/
+static void finishgencycle(lua_State *L, global_State *g) {
+  GCRef *list = correctgraylist(&g->gc.grayagain);
+  *list = g->gc.weak;
+  setgcrefnull(g->gc.weak);
+  correctgraylist(list);
+}
+
+// 进入到分代模式，进行一次完整的标记操作，之后把所有存活的打上old标记
+static void entergen(lua_State *L, global_State *g) {
+  lj_gc_runtilstate(L, GCSpause);
+  lj_gc_runtilstate(L, GCSpropagate);
+  atomic(g, L);
+
+  // 标记所有对象为old;
+  sweep2old(L, &g->gc.root);
+
+  // TODO: 是否要遍历mudata链表？
+  g->gc.kind = KGC_GEN;
+  g->gc.estimate = g->gc.total;
+  finishgencycle(L, g);
 }
 
 static void enterinc(global_State *g) {
-  
+  whitelist(g, g->gc.root);
+  setgcrefnull(g->gc.reallyold);
+  setgcrefnull(g->gc.old);
+  setgcrefnull(g->gc.surival);
+
+  // 遍历所有字符串;
+  whiltestrings(g);
+
+  g->gc.state = GCSpause;
+  g->gc.kind = KGC_INC;
 }
 
 // 更改gc模式;
@@ -855,6 +988,7 @@ void * LJ_FASTCALL lj_mem_newgco(lua_State *L, GCSize size)
   setgcrefr(o->gch.nextgc, g->gc.root);
   setgcref(g->gc.root, o);
   newwhite(g, o);
+  setage(o, G_NEW);
   return o;
 }
 
