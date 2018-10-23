@@ -117,9 +117,12 @@ static LJ_AINLINE void lj_gc_barrierback(global_State *g, GCtab *t)
   GCobj *o = obj2gco(t);
   lua_assert(isblack(o) && !isdead(g, o));
   lua_assert(g->gc.state != GCSfinalize && g->gc.state != GCSpause);
+  if (getage(o) != G_TOUCHED2) {
+    setgcrefr(t->gclist, g->gc.grayagain);
+    setgcref(g->gc.grayagain, o);
+  }
   black2gray(o);
-  setgcrefr(t->gclist, g->gc.grayagain);
-  setgcref(g->gc.grayagain, o);
+  setage(o, G_TOUCHED1);
 }
 
 /* Barrier for stores to table objects. TValue and GCobj variant. */
