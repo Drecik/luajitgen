@@ -203,6 +203,10 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
       }
     }
   }
+  if (!weak && g->gc.kind == KGC_GEN) {
+    setgcrefr(t->gclist, g->gc.grayagain);
+    setgcref(g->gc.grayagain, obj2gco(t));
+  }
   return weak;
 }
 
@@ -572,6 +576,11 @@ static void atomic(global_State *g, lua_State *L)
 {
   size_t udsize;
 
+  // 保存当前的grayagain链表;
+  GCRef grayagain;
+  setgcrefr(grayagain, g->gc.grayagain);
+  setgcrefnull(g->gc.grayagain);
+
   gc_mark_uv(g);  /* Need to remark open upvalues (the thread may be dead). */
   gc_propagate_gray(g);  /* Propagate any left-overs. */
 
@@ -579,12 +588,13 @@ static void atomic(global_State *g, lua_State *L)
   setgcrefnull(g->gc.weak);
   lua_assert(!iswhite(obj2gco(mainthread(g))));
   gc_markobj(g, L);  /* Mark running thread. */
+  gc_markobj(g, tabref(mainthread(g)->env));
+  gc_marktv(g, &g->registrytv);
   gc_traverse_curtrace(g);  /* Traverse current trace. */
   gc_mark_gcroot(g);  /* Mark GC roots (again). */
   gc_propagate_gray(g);  /* Propagate all of the above. */
 
-  setgcrefr(g->gc.gray, g->gc.grayagain);  /* Empty the 2nd chance list. */
-  setgcrefnull(g->gc.grayagain);
+  setgcrefr(g->gc.gray, grayagain);
   gc_propagate_gray(g);  /* Propagate it. */
 
   udsize = lj_gc_separateudata(g, 0);  /* Separate userdata to be finalized. */
@@ -741,6 +751,9 @@ static void sweep2old(lua_State *L, GCRef *p) {
   global_State *g = G(L);
   while ((o = gcref(*p)) != NULL) {
     // TODO: 线程upvalue是否需要特殊处理？
+    if (o->gch.gct == ~LJ_TTHREAD)
+      sweep2old(L, &gco2th(o)->openupval);
+
     if (iswhite(o)) {
       lua_assert(isdead(G(L), o));
       setgcrefr(*p, o->gch.nextgc);
@@ -762,6 +775,7 @@ static void sweep2old(lua_State *L, GCRef *p) {
 ** non-dead objects, advance their ages and clear the color of
 ** new objects. (Old objects keep their colors.)
 */
+static GCRef empty;
 static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
 
   static uint8_t nextage[] = {
@@ -778,6 +792,9 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
   GCobj *objlimit = gcref(limit);
   while ((o = gcref(*p)) != objlimit) {
     // TODO: 线程upvalue是否需要特殊处理？
+    if (o->gch.gct == ~LJ_TTHREAD)
+      sweepgen(L, g, &gco2th(o)->openupval, empty);
+
     if (iswhite(o)) {
       lua_assert(!isold(o) && isdead(g, o));
       setgcrefr(*p, o->gch.nextgc);
@@ -804,6 +821,7 @@ static void whitelist(global_State *g, GCRef p) {
   while ((o = gcref(p)) != NULL) {
     makewhite(g, o);
     setage(o, G_NEW);
+    setgcrefr(p, o->gch.nextgc);
   }
 }
 
@@ -837,7 +855,7 @@ static GCRef *correctgraylist(GCRef *p) {
   GCobj *o;
   while ((o = gcref(*p)) != NULL) {
     switch (~o->gch.gct) {
-      case LUA_TTABLE: case LUA_TUSERDATA: {
+      case LJ_TTAB: case LJ_TUDATA: {
         if (getage(o) == G_TOUCHED1) {
           lua_assert(isgray(o));
           gray2black(o);
@@ -855,8 +873,8 @@ static GCRef *correctgraylist(GCRef *p) {
         }
         break;
       }
-      case LUA_TTHREAD: {
-        lua_assert(!isblack(th));
+      case LJ_TTHREAD: {
+        lua_assert(!isblack(o));
         if (iswhite(o))
           *p = o->gch.gclist;
         else
@@ -889,13 +907,13 @@ static void markold(global_State *g, GCRef from, GCRef to) {
   GCobj *toobj = gcref(to);
   while ((o = gcref(from)) != toobj) {
     if (getage(o) == G_OLD1) {
-      lua_assert(!iswhilte(o));
+      lua_assert(!iswhite(o));
       if (isblack(o)) {
         black2gray(o);
         gc_mark(g, o);
       }
     }
-    from = toobj->gch.nextgc;
+    from = o->gch.nextgc;
   }
 }
 
@@ -1063,8 +1081,13 @@ void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v)
   lua_assert(g->gc.state != GCSfinalize && g->gc.state != GCSpause);
   lua_assert(o->gch.gct != ~LJ_TTAB);
   /* Preserve invariant during propagation. Otherwise it doesn't matter. */
-  if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
+  if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic) {
     gc_mark(g, v);  /* Move frontier forward. */
+    if (isold(o)) {
+      lua_assert(!isold(v));
+      setage(v, G_OLD0);
+    }
+  }
   else
     makewhite(g, o);  /* Make it white to avoid the following barrier. */
 }
