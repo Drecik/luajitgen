@@ -55,7 +55,7 @@
 static void gc_mark(global_State *g, GCobj *o)
 {
   int gct = o->gch.gct;
-  lua_assert(iswhite(o) && !isdead(g, o));
+  //lua_assert(iswhite(o) && !isdead(g, o));
   white2gray(o);
   if (LJ_UNLIKELY(gct == ~LJ_TUDATA)) {
     GCtab *mt = tabref(gco2ud(o)->metatable);
@@ -206,6 +206,7 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
   if (!weak && g->gc.kind == KGC_GEN) {
     setgcrefr(t->gclist, g->gc.grayagain);
     setgcref(g->gc.grayagain, obj2gco(t));
+    black2gray(obj2gco(t));
   }
   return weak;
 }
@@ -313,7 +314,7 @@ static size_t propagatemark(global_State *g)
 {
   GCobj *o = gcref(g->gc.gray);
   int gct = o->gch.gct;
-  lua_assert(isgray(o));
+  //lua_assert(isgray(o));
   gray2black(o);
   setgcrefr(g->gc.gray, o->gch.gclist);  /* Remove from gray list. */
   if (LJ_LIKELY(gct == ~LJ_TTAB)) {
