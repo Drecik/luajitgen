@@ -348,6 +348,20 @@ static LJ_AINLINE uint32_t lj_getu32(const void *v)
 #define api_check		luai_apicheck
 #endif
 
+#ifdef _GC_DEBUG
+#include <stdio.h>
+#define gc_debug(...) printf(__VA_ARGS__); fflush(stdout);
+#else
+#define gc_debug(...) ((void)0)
+#endif
+
+#ifdef _GC_DEBUG2
+#include <stdio.h>
+#define gc_debug2(...) printf(__VA_ARGS__); fflush(stdout);
+#else
+#define gc_debug2(...) ((void)0)
+#endif
+
 /* Static assertions. */
 #define LJ_ASSERT_NAME2(name, line)	name ## line
 #define LJ_ASSERT_NAME(line)		LJ_ASSERT_NAME2(lj_assert_, line)
