@@ -371,16 +371,14 @@
 |
 |// Move table write barrier back. Overwrites reg.
 |.macro barrierback, tab, reg
-|  mov reg, tab->age
-|  cmp reg, G_TOUCHED2
-|  jne >1
 |  mov reg, [DISPATCH+DISPATCH_GL(gc.grayagain)]
+|  cmp byte tab->age, G_TOUCHED2
+|  je >1
 |  mov [DISPATCH+DISPATCH_GL(gc.grayagain)], tab
 |  mov tab->gclist, reg
 |1:
 |  and byte tab->marked, (uint8_t)~LJ_GC_BLACK	// black2gray(tab)
-|  mov reg, G_TOUCHED1
-|  mov tab->age, reg
+|  mov byte tab->age, G_TOUCHED1
 |.endmacro
 |
 |//-----------------------------------------------------------------------
