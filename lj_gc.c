@@ -1037,7 +1037,7 @@ static void youngcollection(lua_State *L, global_State *g) {
   markold(g, g->gc.udatasur, g->gc.udatarold);
   leave("mark old2", NULL);
 
-  // TODO: 特殊处理字符串;
+  // 特殊处理字符串;
   markstringold(g);
 
   enter(NULL);
@@ -1055,7 +1055,7 @@ static void youngcollection(lua_State *L, global_State *g) {
   sweepstringsgen(L);
 
   enter(NULL);
-  psurvival = sweepgen(L, g, &L->nextgc, g->gc.udatasur);
+  psurvival = sweepgen(L, g, &mainthread(g)->nextgc, g->gc.udatasur);
   sweepgen(L, g, psurvival, g->gc.udatarold);
   leave("sweepgen2", NULL);
   g->gc.udatarold = g->gc.udataold;
@@ -1079,7 +1079,8 @@ static void entergen(lua_State *L, global_State *g) {
 
   g->gc.reallyold = g->gc.old = g->gc.surival = g->gc.root;
 
-  // TODO: 是否要遍历mudata链表？
+  g->gc.udatarold = g->gc.udataold = g->gc.udatasur = mainthread(g)->nextgc;
+
   g->gc.kind = KGC_GEN;
   g->gc.estimate = g->gc.total;
   finishgencycle(L, g);
