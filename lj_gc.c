@@ -51,11 +51,47 @@
 /* Mark a string object. */
 #define gc_mark_str(s)		((s)->marked &= (uint8_t)~LJ_GC_WHITES)
 
+static GCRef empty;
+
+#include <sys/time.h>
+long long tick()
+{
+  struct timeval time;
+  gettimeofday(&time, NULL);
+  return time.tv_sec*1000 + time.tv_usec/1000;
+}
+
+#ifdef _GC_DEBUG2
+static long long last_time;
+#endif
+void enter(long long *time)
+{
+#ifdef _GC_DEBUG2
+  if (time == NULL)
+    last_time = tick();
+  else
+    *time = tick();
+#endif
+}
+
+void leave(const char *log, long long *time)
+{
+#ifdef _GC_DEBUG2
+  if (time == NULL) {
+    gc_debug2("%s: %lld\n", log, tick()-last_time);
+  }
+  else {
+    gc_debug2("%s: %lld\n", log, tick()-*time);
+  }
+#endif
+}
+
 /* Mark a white GCobj. */
 static void gc_mark(global_State *g, GCobj *o)
 {
   int gct = o->gch.gct;
   //lua_assert(iswhite(o) && !isdead(g, o));
+  gc_debug("gc_mark: %p, %d\n", o, gct);
   white2gray(o);
   if (LJ_UNLIKELY(gct == ~LJ_TUDATA)) {
     GCtab *mt = tabref(gco2ud(o)->metatable);
@@ -157,6 +193,7 @@ size_t lj_gc_separateudata(global_State *g, int all)
 /* Traverse a table. */
 static int gc_traverse_tab(global_State *g, GCtab *t)
 {
+  gc_debug("gc_traverse_tab: %p\n", t);
   int weak = 0;
   cTValue *mode;
   GCtab *mt = tabref(t->metatable);
@@ -184,13 +221,16 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
       }
     }
   }
+  gc_debug("gc_traverse_tab: %p, %d, %d, %d\n", t, weak, t->asize, t->hmask);
   if (weak == LJ_GC_WEAK)  /* Nothing to mark if both keys/values are weak. */
     return 1;
+  gc_debug("gc_traverse_tab: mark array part: %p\n", t);
   if (!(weak & LJ_GC_WEAKVAL)) {  /* Mark array part. */
     MSize i, asize = t->asize;
     for (i = 0; i < asize; i++)
       gc_marktv(g, arrayslot(t, i));
   }
+  gc_debug("gc_traverse_tab: mark hash part: %p\n", t);
   if (t->hmask > 0) {  /* Mark hash part. */
     Node *node = noderef(t->node);
     MSize i, hmask = t->hmask;
@@ -204,6 +244,7 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
     }
   }
   if (!weak && g->gc.kind == KGC_GEN) {
+    gc_debug("gc_traverse_tab: add to grayagain: %p\n", t);
     setgcrefr(t->gclist, g->gc.grayagain);
     setgcref(g->gc.grayagain, obj2gco(t));
     black2gray(obj2gco(t));
@@ -315,6 +356,7 @@ static size_t propagatemark(global_State *g)
   GCobj *o = gcref(g->gc.gray);
   int gct = o->gch.gct;
   //lua_assert(isgray(o));
+  gc_debug("propagatemark: %p, %d, %d\n", o, gct, getage(o));
   gray2black(o);
   setgcrefr(g->gc.gray, o->gch.gclist);  /* Remove from gray list. */
   if (LJ_LIKELY(gct == ~LJ_TTAB)) {
@@ -582,22 +624,26 @@ static void atomic(global_State *g, lua_State *L)
   setgcrefr(grayagain, g->gc.grayagain);
   setgcrefnull(g->gc.grayagain);
 
+  gc_debug("atomic: print grayagain\n");
+
+  gc_debug("atomic: propagate uv\n");
   gc_mark_uv(g);  /* Need to remark open upvalues (the thread may be dead). */
   gc_propagate_gray(g);  /* Propagate any left-overs. */
 
+  gc_debug("atomic: propagate weak, mainthread, gcroot\n");
   setgcrefr(g->gc.gray, g->gc.weak);  /* Empty the list of weak tables. */
   setgcrefnull(g->gc.weak);
   lua_assert(!iswhite(obj2gco(mainthread(g))));
   gc_markobj(g, L);  /* Mark running thread. */
-  gc_markobj(g, tabref(mainthread(g)->env));
-  gc_marktv(g, &g->registrytv);
   gc_traverse_curtrace(g);  /* Traverse current trace. */
   gc_mark_gcroot(g);  /* Mark GC roots (again). */
   gc_propagate_gray(g);  /* Propagate all of the above. */
 
+  gc_debug("atomic: propagate weak, grayagain\n");
   setgcrefr(g->gc.gray, grayagain);
   gc_propagate_gray(g);  /* Propagate it. */
 
+  gc_debug("atomic: propagate udata\n");
   udsize = lj_gc_separateudata(g, 0);  /* Separate userdata to be finalized. */
   gc_mark_mmudata(g);  /* Mark them. */
   udsize += gc_propagate_gray(g);  /* And propagate the marks. */
@@ -752,6 +798,7 @@ static void sweep2old(lua_State *L, GCRef *p) {
   global_State *g = G(L);
   while ((o = gcref(*p)) != NULL) {
     // TODO: 线程upvalue是否需要特殊处理？
+    gc_debug("sweep2old: %p, %d\n", o, o->gch.gct);
     if (o->gch.gct == ~LJ_TTHREAD)
       sweep2old(L, &gco2th(o)->openupval);
 
@@ -760,12 +807,22 @@ static void sweep2old(lua_State *L, GCRef *p) {
       setgcrefr(*p, o->gch.nextgc);
       if (o == gcref(g->gc.root))
 	      setgcrefr(g->gc.root, o->gch.nextgc);  /* Adjust list anchor. */
+      gc_debug("sweep2old: free: %p\n", o);
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
     }
     else {
+      gc_debug("sweep2old: age to old: %p\n", o);
       setage(o, G_OLD);
       p = &o->gch.nextgc;
     }
+  }
+}
+
+static void sweepstringsold(lua_State *L) {
+  global_State *g = G(L);
+  int i = 0;
+  for (; i < g->strmask; ++i) {
+    sweep2old(L, &g->strhash[i]);
   }
 }
 
@@ -776,7 +833,6 @@ static void sweep2old(lua_State *L, GCRef *p) {
 ** non-dead objects, advance their ages and clear the color of
 ** new objects. (Old objects keep their colors.)
 */
-static GCRef empty;
 static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
 
   static uint8_t nextage[] = {
@@ -792,6 +848,8 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
   GCobj *o;
   GCobj *objlimit = gcref(limit);
   while ((o = gcref(*p)) != objlimit) {
+    gc_debug("sweepgen: %p, %d, %d\n", o, o->gch.gct, getage(o));
+
     // TODO: 线程upvalue是否需要特殊处理？
     if (o->gch.gct == ~LJ_TTHREAD)
       sweepgen(L, g, &gco2th(o)->openupval, empty);
@@ -801,9 +859,11 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
       setgcrefr(*p, o->gch.nextgc);
       if (o == gcref(g->gc.root))
 	      setgcrefr(g->gc.root, o->gch.nextgc);  /* Adjust list anchor. */
+      gc_debug("sweepgen: free: %p\n", o);
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
     }
     else {
+      gc_debug("sweepgen: change age: %p, %d\n", o, nextage[getage(o)]);
       if (getage(o) == G_NEW)
         makewhite(g, o);
       setage(o, nextage[getage(o)]);
@@ -811,6 +871,14 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
     }
   }
   return p;
+}
+
+static void sweepstringsgen(lua_State *L) {
+  global_State *g = G(L);
+  int i = 0;
+  for (; i < g->strmask; ++i) {
+    sweepgen(L, g, &g->strhash[i], empty);
+  }
 }
 
 /*
@@ -852,9 +920,10 @@ void lj_gc_runtilstate (lua_State *L, int state) {
 ** objects become regular old and are removed from the list.
 ** For threads, just remove white ones from the list.
 */
-static GCRef *correctgraylist(GCRef *p) {
+static GCRef *correctgraylist(GCRef *p, GCRef *root) {
   GCobj *o;
   while ((o = gcref(*p)) != NULL) {
+    gc_debug("correctgraylist: %p, %d, %d\n", o, o->gch.gct, getage(o));
     switch (~o->gch.gct) {
       case LJ_TTAB: case LJ_TUDATA: {
         if (getage(o) == G_TOUCHED1) {
@@ -870,8 +939,10 @@ static GCRef *correctgraylist(GCRef *p) {
               changeage(o, G_TOUCHED2, G_OLD);
             gray2black(o);
           }
+          gc_debug("correctgraylist: remove from list: %p\n", o);
           *p = o->gch.gclist;
         }
+        gc_debug("correctgraylist after: %p, %d\n", o, getage(o));
         break;
       }
       case LJ_TTHREAD: {
@@ -892,10 +963,12 @@ static GCRef *correctgraylist(GCRef *p) {
 ** Correct all gray lists, coalescing them into 'grayagain'.
 */
 static void correctgraylists(global_State *g) {
-  GCRef *list = correctgraylist(&g->gc.grayagain);
+  gc_debug("correctgraylists: correct grayagain list\n");
+  GCRef *list = correctgraylist(&g->gc.grayagain, &g->gc.grayagain);
   *list = g->gc.weak;
   setgcrefnull(g->gc.weak);
-  correctgraylist(list);
+  gc_debug("correctgraylists: correct weak list\n");
+  correctgraylist(list, list);
 }
 
 /*
@@ -908,6 +981,7 @@ static void markold(global_State *g, GCRef from, GCRef to) {
   GCobj *toobj = gcref(to);
   while ((o = gcref(from)) != toobj) {
     if (getage(o) == G_OLD1) {
+      gc_debug("markold: %p\n", o);
       lua_assert(!iswhite(o));
       if (isblack(o)) {
         black2gray(o);
@@ -918,6 +992,13 @@ static void markold(global_State *g, GCRef from, GCRef to) {
   }
 }
 
+
+static void markstringold(global_State *g) {
+  int i = 0;
+  for (; i < g->strmask; ++i) {
+    markold(g, g->strhash[i], empty);
+  }
+}
 
 /*
 ** call all pending finalizers
@@ -945,24 +1026,44 @@ static void finishgencycle(lua_State *L, global_State *g) {
 ** sweep all lists and advance pointers. Finally, finish the collection.
 */
 static void youngcollection(lua_State *L, global_State *g) {
+  gc_debug2("youngcollection: ");
   lua_assert(g->gc.state == GCSpropagate);
+  enter(NULL);
   markold(g, g->gc.surival, g->gc.reallyold);
-  markold(g, g->gc.udatasur, g->gc.udatarold);
-  atomic(g, L);
+  leave("mark old1", NULL);
 
+  enter(NULL);
+  markold(g, g->gc.udatasur, g->gc.udatarold);
+  leave("mark old2", NULL);
+
+  // TODO: 特殊处理字符串;
+  markstringold(g);
+
+  enter(NULL);
+  atomic(g, L);
+  leave("atomic", NULL);
+
+  enter(NULL);
   GCRef *psurvival = sweepgen(L, g, &g->gc.root, g->gc.surival);
   sweepgen(L, g, psurvival, g->gc.reallyold);
+  leave("sweepgen1", NULL);
   g->gc.reallyold = g->gc.old;
   g->gc.old = *psurvival;
   g->gc.surival = g->gc.root;
 
+  sweepstringsgen(L);
+
+  enter(NULL);
   psurvival = sweepgen(L, g, &L->nextgc, g->gc.udatasur);
   sweepgen(L, g, psurvival, g->gc.udatarold);
+  leave("sweepgen2", NULL);
   g->gc.udatarold = g->gc.udataold;
   g->gc.udataold = *psurvival;
   g->gc.udatasur = L->nextgc;
 
+  enter(NULL);
   finishgencycle(L, g);
+  leave("finishgencycle", NULL);
 }
 
 // 进入到分代模式，进行一次完整的标记操作，之后把所有存活的打上old标记
@@ -973,6 +1074,9 @@ static void entergen(lua_State *L, global_State *g) {
 
   // 标记所有对象为old;
   sweep2old(L, &g->gc.root);
+  sweepstringsold(L);
+
+  g->gc.reallyold = g->gc.old = g->gc.surival = g->gc.root;
 
   // TODO: 是否要遍历mudata链表？
   g->gc.kind = KGC_GEN;
@@ -997,6 +1101,7 @@ static void enterinc(global_State *g) {
 ** Does a full collection in generational mode.
 */
 static void fullgen(lua_State *L, global_State *g) {
+  gc_debug2("fullgen: \n");
   enterinc(g);
   entergen(L, g);
 }
@@ -1012,22 +1117,28 @@ static void fullgen(lua_State *L, global_State *g) {
 static void genstep(lua_State *L, global_State *g) {
   MSize majorbase = g->gc.estimate;
   int majormul = getgcparam(g->gc.genmajormul);
+  gc_debug2("genstep: %d, %d, %ld, %ld\n", majorbase, majormul, g->gc.total, g->gc.threshold);
   if (g->gc.total > g->gc.threshold && g->gc.total > (majorbase / 100) * (100 + majormul))
     fullgen(L, g);
   else {
     youngcollection(L, g);
     MSize mem = g->gc.total;
-    g->gc.threshold = (mem / 100) * g->gc.genminormul;
+    g->gc.threshold = (mem / 100) * (100 + g->gc.genminormul);
     g->gc.estimate = majorbase;
   }
+  gc_debug2("genstep end: %ld, %ld, %ld\n", g->gc.estimate, g->gc.total, g->gc.threshold);
 }
 
 int LJ_FASTCALL lj_gc_step(lua_State *L) {
+  gc_debug2("lj_gc_step: \n");
   global_State *g = G(L);
+  long long begin;
+  enter(&begin);
   if (g->gc.kind == KGC_INC)
     return incstep(L);
   else
     genstep(L, g);
+  leave("lj_gc_step: ", &begin);
   return 1;
 }
 
@@ -1081,6 +1192,7 @@ void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v)
   lua_assert(isblack(o) && iswhite(v) && !isdead(g, v) && !isdead(g, o));
   lua_assert(g->gc.state != GCSfinalize && g->gc.state != GCSpause);
   lua_assert(o->gch.gct != ~LJ_TTAB);
+  gc_debug("lj_gc_barrierf: %p, %p, %d\n", o, v, getage(o));
   /* Preserve invariant during propagation. Otherwise it doesn't matter. */
   if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic) {
     gc_mark(g, v);  /* Move frontier forward. */
@@ -1096,6 +1208,7 @@ void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v)
 /* Specialized barrier for closed upvalue. Pass &uv->tv. */
 void LJ_FASTCALL lj_gc_barrieruv(global_State *g, TValue *tv)
 {
+  gc_debug("lj_gc_barrieruv: %p\n", gcV(tv));
 #define TV2MARKED(x) \
   (*((uint8_t *)(x) - offsetof(GCupval, tv) + offsetof(GCupval, marked)))
   if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
