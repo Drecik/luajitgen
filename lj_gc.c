@@ -802,7 +802,7 @@ static void sweep2old(lua_State *L, GCRef *p) {
     if (o->gch.gct == ~LJ_TTHREAD)
       sweep2old(L, &gco2th(o)->openupval);
 
-    if (iswhite(o)) {
+    if (iswhite(o) && !isfixed(o)) {
       lua_assert(isdead(G(L), o));
       setgcrefr(*p, o->gch.nextgc);
       if (o == gcref(g->gc.root))
@@ -854,7 +854,7 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
     if (o->gch.gct == ~LJ_TTHREAD)
       sweepgen(L, g, &gco2th(o)->openupval, empty);
 
-    if (iswhite(o)) {
+    if (iswhite(o) && !isfixed(o)) {
       lua_assert(!isold(o) && isdead(g, o));
       setgcrefr(*p, o->gch.nextgc);
       if (o == gcref(g->gc.root))
