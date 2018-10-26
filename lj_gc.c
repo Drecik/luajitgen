@@ -797,8 +797,9 @@ static void sweep2old(lua_State *L, GCRef *p) {
   GCobj *o;
   global_State *g = G(L);
   while ((o = gcref(*p)) != NULL) {
-    // TODO: 线程upvalue是否需要特殊处理？
     gc_debug("sweep2old: %p, %d\n", o, o->gch.gct);
+
+    // 线程upvalue是否需要特殊处理
     if (o->gch.gct == ~LJ_TTHREAD)
       sweep2old(L, &gco2th(o)->openupval);
 
@@ -850,7 +851,7 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
   while ((o = gcref(*p)) != objlimit) {
     gc_debug("sweepgen: %p, %d, %d\n", o, o->gch.gct, getage(o));
 
-    // TODO: 线程upvalue是否需要特殊处理？
+    // 线程upvalue是否需要特殊处理
     if (o->gch.gct == ~LJ_TTHREAD)
       sweepgen(L, g, &gco2th(o)->openupval, empty);
 
