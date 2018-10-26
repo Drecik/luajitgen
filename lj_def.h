@@ -362,6 +362,13 @@ static LJ_AINLINE uint32_t lj_getu32(const void *v)
 #define gc_debug2(...) ((void)0)
 #endif
 
+#ifdef _GC_DEBUG3
+#include <stdio.h>
+#define gc_debug3(...) printf(__VA_ARGS__); fflush(stdout);
+#else
+#define gc_debug3(...) ((void)0)
+#endif
+
 /* Static assertions. */
 #define LJ_ASSERT_NAME2(name, line)	name ## line
 #define LJ_ASSERT_NAME(line)		LJ_ASSERT_NAME2(lj_assert_, line)

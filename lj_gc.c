@@ -806,8 +806,6 @@ static void sweep2old(lua_State *L, GCRef *p) {
     if (iswhite(o) && !isfixed(o)) {
       lua_assert(isdead(G(L), o));
       setgcrefr(*p, o->gch.nextgc);
-      if (o == gcref(g->gc.root))
-	      setgcrefr(g->gc.root, o->gch.nextgc);  /* Adjust list anchor. */
       gc_debug("sweep2old: free: %p\n", o);
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
     }
@@ -834,7 +832,7 @@ static void sweepstringsold(lua_State *L) {
 ** non-dead objects, advance their ages and clear the color of
 ** new objects. (Old objects keep their colors.)
 */
-static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
+static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit, GCRef *root) {
 
   static uint8_t nextage[] = {
     G_SURVIVAL,  /* from G_NEW */
@@ -853,13 +851,13 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit) {
 
     // 线程upvalue是否需要特殊处理
     if (o->gch.gct == ~LJ_TTHREAD)
-      sweepgen(L, g, &gco2th(o)->openupval, empty);
+      sweepgen(L, g, &gco2th(o)->openupval, empty, NULL);
 
     if (iswhite(o) && !isfixed(o)) {
       lua_assert(!isold(o) && isdead(g, o));
       setgcrefr(*p, o->gch.nextgc);
-      if (o == gcref(g->gc.root))
-	      setgcrefr(g->gc.root, o->gch.nextgc);  /* Adjust list anchor. */
+      if (root && o == gcref(*root))
+        setgcrefr(*root, o->gch.nextgc);
       gc_debug("sweepgen: free: %p\n", o);
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
     }
@@ -878,7 +876,7 @@ static void sweepstringsgen(lua_State *L) {
   global_State *g = G(L);
   int i = 0;
   for (; i < g->strmask; ++i) {
-    sweepgen(L, g, &g->strhash[i], empty);
+    sweepgen(L, g, &g->strhash[i], empty, NULL);
   }
 }
 
@@ -981,6 +979,7 @@ static void markold(global_State *g, GCRef from, GCRef to) {
   GCobj *o;
   GCobj *toobj = gcref(to);
   while ((o = gcref(from)) != toobj) {
+    //gc_debug3("markold: %p\n", o);
     if (getage(o) == G_OLD1) {
       gc_debug("markold: %p\n", o);
       lua_assert(!iswhite(o));
@@ -1027,17 +1026,20 @@ static void finishgencycle(lua_State *L, global_State *g) {
 ** sweep all lists and advance pointers. Finally, finish the collection.
 */
 static void youngcollection(lua_State *L, global_State *g) {
-  gc_debug2("youngcollection: ");
+  gc_debug2("youngcollection: \n");
   lua_assert(g->gc.state == GCSpropagate);
   enter(NULL);
+  gc_debug3("mark gcobj: %p, %p\n", gcref(g->gc.surival), gcref(g->gc.reallyold));
   markold(g, g->gc.surival, g->gc.reallyold);
   leave("mark old1", NULL);
 
   enter(NULL);
+  gc_debug3("mark udata: %p, %p\n", gcref(g->gc.udatasur), gcref(g->gc.udatarold));
   markold(g, g->gc.udatasur, g->gc.udatarold);
   leave("mark old2", NULL);
 
   // 特殊处理字符串;
+  gc_debug3("mark string:\n");
   markstringold(g);
 
   enter(NULL);
@@ -1045,8 +1047,8 @@ static void youngcollection(lua_State *L, global_State *g) {
   leave("atomic", NULL);
 
   enter(NULL);
-  GCRef *psurvival = sweepgen(L, g, &g->gc.root, g->gc.surival);
-  sweepgen(L, g, psurvival, g->gc.reallyold);
+  GCRef *psurvival = sweepgen(L, g, &g->gc.root, g->gc.surival, NULL);
+  sweepgen(L, g, psurvival, g->gc.reallyold, &g->gc.old);
   leave("sweepgen1", NULL);
   g->gc.reallyold = g->gc.old;
   g->gc.old = *psurvival;
@@ -1055,12 +1057,14 @@ static void youngcollection(lua_State *L, global_State *g) {
   sweepstringsgen(L);
 
   enter(NULL);
-  psurvival = sweepgen(L, g, &mainthread(g)->nextgc, g->gc.udatasur);
-  sweepgen(L, g, psurvival, g->gc.udatarold);
+  psurvival = sweepgen(L, g, &mainthread(g)->nextgc, g->gc.udatasur, NULL);
+  sweepgen(L, g, psurvival, g->gc.udatarold, &g->gc.udataold);
   leave("sweepgen2", NULL);
+  gc_debug3("udata after gen: %p %p %p, %p\n", gcref(mainthread(g)->nextgc), gcref(g->gc.udatasur), gcref(g->gc.udataold), gcref(g->gc.udatarold));
   g->gc.udatarold = g->gc.udataold;
   g->gc.udataold = *psurvival;
-  g->gc.udatasur = L->nextgc;
+  g->gc.udatasur = mainthread(g)->nextgc;
+  gc_debug3("udata after: %p %p, %p\n", gcref(g->gc.udatasur), gcref(g->gc.udataold), gcref(g->gc.udatarold));
 
   enter(NULL);
   finishgencycle(L, g);
