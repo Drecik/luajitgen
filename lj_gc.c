@@ -171,9 +171,14 @@ size_t lj_gc_separateudata(global_State *g, int all)
       markfinalized(o);  /* Done, as there's no __gc metamethod. */
       p = &o->gch.nextgc;
     } else {  /* Otherwise move userdata to be finalized to mmudata list. */
+      gc_debug3("lj_gc_separateudata: %p\n", o);
       m += sizeudata(gco2ud(o));
       markfinalized(o);
       *p = o->gch.nextgc;
+      if (LJ_UNLIKELY(o == gcref(g->gc.udatasur)))
+        setgcrefr(g->gc.udatasur, o->gch.nextgc);
+      if (LJ_UNLIKELY(o == gcref(g->gc.udataold)))
+        setgcrefr(g->gc.udataold, o->gch.nextgc);
       if (gcref(g->gc.mmudata)) {  /* Link to end of mmudata list. */
 	GCobj *root = gcref(g->gc.mmudata);
 	setgcrefr(o->gch.nextgc, root->gch.nextgc);
