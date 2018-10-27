@@ -1273,10 +1273,10 @@ static void build_subroutines(BuildCtx *ctx)
   |  mov PC, [BASE-8]
   |  mov [BASE-16], TAB:TMPR			// Return original table.
   |  test byte TAB:RB->marked, LJ_GC_BLACK	// isblack(table)
-  |  jz >1
+  |  jz >2
   |  // Possible write barrier. Table is black, but skip iswhite(mt) check.
   |  barrierback TAB:RB, RC
-  |1:
+  |2:
   |  jmp ->fff_res1
   |
   |.ffunc_2 rawget
@@ -3777,7 +3777,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  add RC, TAB:RB->array
     |  cmp aword [RC], LJ_TNIL
     |  je >3				// Previous value is nil?
-    |1:
+    |8:
     |  test byte TAB:RB->marked, LJ_GC_BLACK	// isblack(table)
     |  jnz >7
     |2:  // Set array slot.
@@ -3788,10 +3788,10 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |3:  // Check for __newindex if previous value is nil.
     |  mov TAB:TMPR, TAB:RB->metatable
     |  test TAB:TMPR, TAB:TMPR
-    |  jz <1
+    |  jz <8
     |  test byte TAB:TMPR->nomm, 1<<MM_newindex
     |  jz ->vmeta_tsetv			// 'no __newindex' flag NOT set: check.
-    |  jmp <1
+    |  jmp <8
     |
     |5:  // String key?
     |  cmp ITYPEd, LJ_TSTR; jne ->vmeta_tsetv
@@ -3815,7 +3815,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  mov byte TAB:RB->nomm, 0		// Clear metamethod cache.
     |  add NODE:TMPR, TAB:RB->node
     |  settp ITYPE, STR:RC, LJ_TSTR
-    |1:
+    |8:
     |  cmp NODE:TMPR->key, ITYPE
     |  jne >5
     |  // Ok, key found. Assumes: offsetof(Node, val) == 0
@@ -3840,7 +3840,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |5:  // Follow hash chain.
     |  mov NODE:TMPR, NODE:TMPR->next
     |  test NODE:TMPR, NODE:TMPR
-    |  jnz <1
+    |  jnz <8
     |  // End of hash chain: key not found, add a new one.
     |
     |  // But check for __newindex first.
@@ -3878,7 +3878,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  add RC, TAB:RB->array
     |  cmp aword [RC], LJ_TNIL
     |  je >3				// Previous value is nil?
-    |1:
+    |8:
     |  test byte TAB:RB->marked, LJ_GC_BLACK	// isblack(table)
     |  jnz >7
     |2:	 // Set array slot.
@@ -3889,10 +3889,10 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |3:  // Check for __newindex if previous value is nil.
     |  mov TAB:TMPR, TAB:RB->metatable
     |  test TAB:TMPR, TAB:TMPR
-    |  jz <1
+    |  jz <8
     |  test byte TAB:TMPR->nomm, 1<<MM_newindex
     |  jz ->vmeta_tsetb			// 'no __newindex' flag NOT set: check.
-    |  jmp <1
+    |  jmp <8
     |
     |7:  // Possible table write barrier for the value. Skip valiswhite check.
     |  barrierback TAB:RB, TMPR
@@ -3927,7 +3927,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
 
   case BC_TSETM:
     |  ins_AD	// RA = base (table at base-1), RD = num const (start index)
-    |1:
+    |8:
     |  mov TMPRd, dword [KBASE+RD*8]	// Integer constant is in lo-word.
     |  lea RA, [BASE+RA*8]
     |  mov TAB:RB, [RA-8]		// Guaranteed to be a table.
@@ -3965,7 +3965,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  mov BASE, L:RB->base
     |  movzx RAd, PC_RA			// Restore RA.
     |  movzx RDd, PC_RD			// Restore RD.
-    |  jmp <1				// Retry.
+    |  jmp <8				// Retry.
     |
     |7:  // Possible table write barrier for any value. Skip valiswhite check.
     |  barrierback TAB:RB, RD
