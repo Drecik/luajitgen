@@ -92,6 +92,7 @@ static void gc_mark(global_State *g, GCobj *o)
   int gct = o->gch.gct;
   //lua_assert(iswhite(o) && !isdead(g, o));
   gc_debug("gc_mark: %p, %d\n", o, gct);
+  gc_debug4("gc_mark: %p, %d, %d\n", o, gct, getage(o));
   white2gray(o);
   if (LJ_UNLIKELY(gct == ~LJ_TUDATA)) {
     GCtab *mt = tabref(gco2ud(o)->metatable);
@@ -260,6 +261,7 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
 /* Traverse a function. */
 static void gc_traverse_func(global_State *g, GCfunc *fn)
 {
+  gc_debug4("gc_traverse_func: %p, %d\n", fn, getage(obj2gco(fn)));
   gc_markobj(g, tabref(fn->c.env));
   if (isluafunc(fn)) {
     uint32_t i;
@@ -362,6 +364,7 @@ static size_t propagatemark(global_State *g)
   int gct = o->gch.gct;
   //lua_assert(isgray(o));
   gc_debug("propagatemark: %p, %d, %d\n", o, gct, getage(o));
+  gc_debug4("propagatemark: %p, %d, %d\n", o, gct, getage(o));
   gray2black(o);
   setgcrefr(g->gc.gray, o->gch.gclist);  /* Remove from gray list. */
   if (LJ_LIKELY(gct == ~LJ_TTAB)) {
@@ -809,7 +812,7 @@ static void sweep2old(lua_State *L, GCRef *p) {
       sweep2old(L, &gco2th(o)->openupval);
 
     if (iswhite(o) && !isfixed(o)) {
-      lua_assert(isdead(G(L), o));
+      lua_assert(isdead(g, o));
       setgcrefr(*p, o->gch.nextgc);
       gc_debug("sweep2old: free: %p\n", o);
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
@@ -894,6 +897,10 @@ static void whitelist(global_State *g, GCRef p) {
   while ((o = gcref(p)) != NULL) {
     makewhite(g, o);
     setage(o, G_NEW);
+
+    if (o->gch.gct == ~LJ_TTHREAD)
+      whitelist(g, gco2th(o)->openupval);
+
     setgcrefr(p, o->gch.nextgc);
   }
 }
@@ -987,7 +994,7 @@ static void markold(global_State *g, GCRef from, GCRef to) {
     //gc_debug3("markold: %p\n", o);
     if (getage(o) == G_OLD1) {
       gc_debug("markold: %p\n", o);
-      lua_assert(!iswhite(o));
+      lua_assert(!iswhite(o) || isfixed(o));
       if (isblack(o)) {
         black2gray(o);
         gc_mark(g, o);
@@ -1289,6 +1296,7 @@ void * LJ_FASTCALL lj_mem_newgco(lua_State *L, GCSize size)
   setgcref(g->gc.root, o);
   newwhite(g, o);
   setage(o, G_NEW);
+  gc_debug4("lj_mem_newgco: %p\n", o);
   return o;
 }
 

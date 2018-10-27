@@ -51,6 +51,7 @@ static GCupval *func_finduv(lua_State *L, TValue *slot)
   /* No matching upvalue found. Create a new one. */
   uv = lj_mem_newt(L, sizeof(GCupval), GCupval);
   newwhite(g, uv);
+  setage(obj2gco(uv), G_NEW);
   uv->gct = ~LJ_TUPVAL;
   uv->closed = 0;  /* Still open. */
   setmref(uv->v, slot);  /* Pointing to the stack slot. */
@@ -62,6 +63,7 @@ static GCupval *func_finduv(lua_State *L, TValue *slot)
   setgcref(uvnext(uv)->prev, obj2gco(uv));
   setgcref(g->uvhead.next, obj2gco(uv));
   lua_assert(uvprev(uvnext(uv)) == uv && uvnext(uvprev(uv)) == uv);
+  gc_debug4("func_finduv: %p, %p\n", uv, slot);
   return uv;
 }
 
@@ -73,6 +75,7 @@ static GCupval *func_emptyuv(lua_State *L)
   uv->closed = 1;
   setnilV(&uv->tv);
   setmref(uv->v, &uv->tv);
+  gc_debug4("func_emptyuv: %p\n", uv);
   return uv;
 }
 
@@ -97,6 +100,7 @@ void LJ_FASTCALL lj_func_closeuv(lua_State *L, TValue *level)
 
 void LJ_FASTCALL lj_func_freeuv(global_State *g, GCupval *uv)
 {
+  gc_debug4("lj_func_freeuv: %p\n", uv);
   if (!uv->closed)
     unlinkuv(uv);
   lj_mem_freet(g, uv);
@@ -113,6 +117,7 @@ GCfunc *lj_func_newC(lua_State *L, MSize nelems, GCtab *env)
   /* NOBARRIER: The GCfunc is new (marked white). */
   setmref(fn->c.pc, &G(L)->bc_cfunc_ext);
   setgcref(fn->c.env, obj2gco(env));
+  gc_debug4("lj_func_newC: %p\n", fn);
   return fn;
 }
 
@@ -129,6 +134,7 @@ static GCfunc *func_newL(lua_State *L, GCproto *pt, GCtab *env)
   /* Saturating 3 bit counter (0..7) for created closures. */
   count = (uint32_t)pt->flags + PROTO_CLCOUNT;
   pt->flags = (uint8_t)(count - ((count >> PROTO_CLC_BITS) & PROTO_CLCOUNT));
+  gc_debug4("func_newL: %p\n", fn);
   return fn;
 }
 
@@ -180,6 +186,7 @@ GCfunc *lj_func_newL_gc(lua_State *L, GCproto *pt, GCfuncL *parent)
 
 void LJ_FASTCALL lj_func_free(global_State *g, GCfunc *fn)
 {
+  gc_debug4("lj_func_free: %p\n", fn);
   MSize size = isluafunc(fn) ? sizeLfunc((MSize)fn->l.nupvalues) :
 			       sizeCfunc((MSize)fn->c.nupvalues);
   lj_mem_free(g, fn, size);

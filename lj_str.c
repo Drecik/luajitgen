@@ -173,6 +173,7 @@ GCstr *lj_str_new(lua_State *L, const char *str, size_t lenx)
   /* Nope, create a new string. */
   s = lj_mem_newt(L, sizeof(GCstr)+len+1, GCstr);
   newwhite(g, s);
+  setage(obj2gco(s), G_NEW);
   s->gct = ~LJ_TSTR;
   s->len = len;
   s->hash = h;
