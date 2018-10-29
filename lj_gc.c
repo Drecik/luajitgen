@@ -93,6 +93,7 @@ static void gc_mark(global_State *g, GCobj *o)
   //lua_assert(iswhite(o) && !isdead(g, o));
   gc_debug("gc_mark: %p, %d\n", o, gct);
   gc_debug4("gc_mark: %p, %d, %d\n", o, gct, getage(o));
+  gc_debug5("gc_mark: %p, %d, %d\n", o, gct, getage(o));
   white2gray(o);
   if (LJ_UNLIKELY(gct == ~LJ_TUDATA)) {
     GCtab *mt = tabref(gco2ud(o)->metatable);
@@ -345,9 +346,12 @@ static MSize gc_traverse_frames(global_State *g, lua_State *th)
 /* Traverse a thread object. */
 static void gc_traverse_thread(global_State *g, lua_State *th)
 {
+  gc_debug5("gc_traverse_thread: %p, %p, %p\n", th, tvref(th->stack)+1+LJ_FR2, th->top);
   TValue *o, *top = th->top;
-  for (o = tvref(th->stack)+1+LJ_FR2; o < top; o++)
+  for (o = tvref(th->stack)+1+LJ_FR2; o < top; o++) {
+    gc_debug5("gc_traverse_thread: %p, %d, %p\n", o, ~itype(o), gcval(o));
     gc_marktv(g, o);
+  }
   if (g->gc.state == GCSatomic) {
     top = tvref(th->stack) + th->stacksize;
     for (; o < top; o++)  /* Clear unmarked slots. */
@@ -815,6 +819,7 @@ static void sweep2old(lua_State *L, GCRef *p) {
       lua_assert(isdead(g, o));
       setgcrefr(*p, o->gch.nextgc);
       gc_debug("sweep2old: free: %p\n", o);
+      gc_debug5("sweep2old: free: %p\n", o);
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
     }
     else {
@@ -867,6 +872,7 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit, GCR
       if (root && o == gcref(*root))
         setgcrefr(*root, o->gch.nextgc);
       gc_debug("sweepgen: free: %p\n", o);
+      gc_debug5("sweepgen: free: %p\n", o);
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
     }
     else {
@@ -991,7 +997,7 @@ static void markold(global_State *g, GCRef from, GCRef to) {
   GCobj *o;
   GCobj *toobj = gcref(to);
   while ((o = gcref(from)) != toobj) {
-    //gc_debug3("markold: %p\n", o);
+    gc_debug5("markold: %p, %d\n", o, getage(o));
     if (getage(o) == G_OLD1) {
       gc_debug("markold: %p\n", o);
       lua_assert(!iswhite(o) || isfixed(o));
@@ -1055,6 +1061,7 @@ static void youngcollection(lua_State *L, global_State *g) {
   markstringold(g);
 
   enter(NULL);
+  g->gc.state = GCSatomic;
   atomic(g, L);
   leave("atomic", NULL);
 
@@ -1227,6 +1234,7 @@ void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v)
 void LJ_FASTCALL lj_gc_barrieruv(global_State *g, TValue *tv)
 {
   gc_debug("lj_gc_barrieruv: %p\n", gcV(tv));
+  gc_debug5("lj_gc_barrieruv: %p\n", gcV(tv));
 #define TV2MARKED(x) \
   (*((uint8_t *)(x) - offsetof(GCupval, tv) + offsetof(GCupval, marked)))
   if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
@@ -1280,6 +1288,7 @@ void *lj_mem_realloc(lua_State *L, void *p, GCSize osz, GCSize nsz)
   lua_assert((nsz == 0) == (p == NULL));
   lua_assert(checkptrGC(p));
   g->gc.total = (g->gc.total - osz) + nsz;
+  gc_debug5("lj_mem_realloc: %p\n", p);
   return p;
 }
 
@@ -1296,7 +1305,7 @@ void * LJ_FASTCALL lj_mem_newgco(lua_State *L, GCSize size)
   setgcref(g->gc.root, o);
   newwhite(g, o);
   setage(o, G_NEW);
-  gc_debug4("lj_mem_newgco: %p\n", o);
+  gc_debug5("lj_mem_newgco: %p\n", o);
   return o;
 }
 

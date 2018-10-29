@@ -142,6 +142,7 @@ static GCtab *newtab(lua_State *L, uint32_t asize, uint32_t hbits)
   if (hbits)
     newhpart(L, t, hbits);
   gc_debug("newtab: %p, %d, %d\n", t, asize, hbits);
+  gc_debug5("newtab: %p, %d, %d\n", t, asize, hbits);
   return t;
 }
 
@@ -234,6 +235,7 @@ void LJ_FASTCALL lj_tab_clear(GCtab *t)
 void LJ_FASTCALL lj_tab_free(global_State *g, GCtab *t)
 {
   gc_debug("lj_tab_free: %p\n", t);
+  gc_debug5("lj_tab_free: %p\n", t);
   if (t->hmask > 0)
     lj_mem_freevec(g, noderef(t->node), t->hmask+1, Node);
   if (t->asize > 0 && LJ_MAX_COLOSIZE != 0 && t->colo <= 0)
