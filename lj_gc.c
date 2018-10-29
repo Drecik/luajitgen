@@ -234,8 +234,10 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
   gc_debug("gc_traverse_tab: mark array part: %p\n", t);
   if (!(weak & LJ_GC_WEAKVAL)) {  /* Mark array part. */
     MSize i, asize = t->asize;
-    for (i = 0; i < asize; i++)
+    for (i = 0; i < asize; i++) {
+      gc_debug("gc_traverse_tab: %p, %d, %p\n", t, ~itype(arrayslot(t, i)), arrayslot(t, i));
       gc_marktv(g, arrayslot(t, i));
+    }
   }
   gc_debug("gc_traverse_tab: mark hash part: %p\n", t);
   if (t->hmask > 0) {  /* Mark hash part. */
@@ -636,6 +638,8 @@ static void atomic(global_State *g, lua_State *L)
   setgcrefr(grayagain, g->gc.grayagain);
   setgcrefnull(g->gc.grayagain);
 
+  g->gc.state = GCSatomic;
+
   gc_debug("atomic: print grayagain\n");
 
   gc_debug("atomic: propagate uv\n");
@@ -833,7 +837,7 @@ static void sweep2old(lua_State *L, GCRef *p) {
 static void sweepstringsold(lua_State *L) {
   global_State *g = G(L);
   int i = 0;
-  for (; i < g->strmask; ++i) {
+  for (; i <= g->strmask; ++i) {
     sweep2old(L, &g->strhash[i]);
   }
 }
@@ -889,7 +893,7 @@ static GCRef *sweepgen(lua_State *L, global_State *g, GCRef *p, GCRef limit, GCR
 static void sweepstringsgen(lua_State *L) {
   global_State *g = G(L);
   int i = 0;
-  for (; i < g->strmask; ++i) {
+  for (; i <= g->strmask; ++i) {
     sweepgen(L, g, &g->strhash[i], empty, NULL);
   }
 }
@@ -1061,7 +1065,6 @@ static void youngcollection(lua_State *L, global_State *g) {
   markstringold(g);
 
   enter(NULL);
-  g->gc.state = GCSatomic;
   atomic(g, L);
   leave("atomic", NULL);
 
