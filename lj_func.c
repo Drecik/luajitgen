@@ -118,6 +118,7 @@ GCfunc *lj_func_newC(lua_State *L, MSize nelems, GCtab *env)
   setmref(fn->c.pc, &G(L)->bc_cfunc_ext);
   setgcref(fn->c.env, obj2gco(env));
   gc_debug4("lj_func_newC: %p\n", fn);
+  gc_debug6("lj_func_newC: %p\n", fn);
   return fn;
 }
 
@@ -187,6 +188,7 @@ GCfunc *lj_func_newL_gc(lua_State *L, GCproto *pt, GCfuncL *parent)
 void LJ_FASTCALL lj_func_free(global_State *g, GCfunc *fn)
 {
   gc_debug4("lj_func_free: %p\n", fn);
+  gc_debug6("lj_func_free: %p, %d\n", fn, isluafunc(fn));
   MSize size = isluafunc(fn) ? sizeLfunc((MSize)fn->l.nupvalues) :
 			       sizeCfunc((MSize)fn->c.nupvalues);
   lj_mem_free(g, fn, size);

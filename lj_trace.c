@@ -137,6 +137,7 @@ GCtrace * LJ_FASTCALL lj_trace_alloc(lua_State *L, GCtrace *T)
   T2->nsnap = T->nsnap;
   T2->nsnapmap = T->nsnapmap;
   memcpy(p, T->ir + T->nk, szins);
+  gc_debug6("lj_trace_alloc: %p, %p\n", T, T2);
   return T2;
 }
 
@@ -150,6 +151,7 @@ static void trace_save(jit_State *J, GCtrace *T)
   setgcrefr(T->nextgc, J2G(J)->gc.root);
   setgcrefp(J2G(J)->gc.root, T);
   newwhite(J2G(J), T);
+  setage(obj2gco(T), G_NEW);
   T->gct = ~LJ_TTRACE;
   T->ir = (IRIns *)p - J->cur.nk;  /* The IR has already been copied above. */
   p += szins;
@@ -158,6 +160,7 @@ static void trace_save(jit_State *J, GCtrace *T)
   J->cur.traceno = 0;
   J->curfinal = NULL;
   setgcrefp(J->trace[T->traceno], T);
+  gc_debug6("trace_save: %p\n", T);
   lj_gc_barriertrace(J2G(J), T->traceno);
   lj_gdbjit_addtrace(J, T);
 #ifdef LUAJIT_USE_PERFTOOLS
@@ -167,6 +170,7 @@ static void trace_save(jit_State *J, GCtrace *T)
 
 void LJ_FASTCALL lj_trace_free(global_State *g, GCtrace *T)
 {
+  gc_debug6("lj_trace_free: %p\n", T);
   jit_State *J = G2J(g);
   if (T->traceno) {
     lj_gdbjit_deltrace(J, T);

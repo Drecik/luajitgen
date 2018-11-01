@@ -94,6 +94,7 @@ static void gc_mark(global_State *g, GCobj *o)
   gc_debug("gc_mark: %p, %d\n", o, gct);
   gc_debug4("gc_mark: %p, %d, %d\n", o, gct, getage(o));
   gc_debug5("gc_mark: %p, %d, %d\n", o, gct, getage(o));
+  gc_debug6("gc_mark: %p, %d, %d\n", o, gct, getage(o));
   white2gray(o);
   if (LJ_UNLIKELY(gct == ~LJ_TUDATA)) {
     GCtab *mt = tabref(gco2ud(o)->metatable);
@@ -265,6 +266,7 @@ static int gc_traverse_tab(global_State *g, GCtab *t)
 static void gc_traverse_func(global_State *g, GCfunc *fn)
 {
   gc_debug4("gc_traverse_func: %p, %d\n", fn, getage(obj2gco(fn)));
+  gc_debug6("gc_traverse_func: %p, %d, %d\n", fn, getage(obj2gco(fn)), isluafunc(fn));
   gc_markobj(g, tabref(fn->c.env));
   if (isluafunc(fn)) {
     uint32_t i;
@@ -284,6 +286,7 @@ static void gc_traverse_func(global_State *g, GCfunc *fn)
 static void gc_marktrace(global_State *g, TraceNo traceno)
 {
   GCobj *o = obj2gco(traceref(G2J(g), traceno));
+  gc_debug6("gc_marktrace: %p, %d, %d\n", o, traceno, o->gch.marked);
   lua_assert(traceno != G2J(g)->cur.traceno);
   if (iswhite(o)) {
     white2gray(o);
@@ -295,6 +298,7 @@ static void gc_marktrace(global_State *g, TraceNo traceno)
 /* Traverse a trace. */
 static void gc_traverse_trace(global_State *g, GCtrace *T)
 {
+  gc_debug6("gc_traverse_trace: %p\n", T);
   IRRef ref;
   if (T->traceno == 0) return;
   for (ref = T->nk; ref < REF_TRUE; ref++) {
@@ -1221,6 +1225,7 @@ void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v)
   lua_assert(g->gc.state != GCSfinalize && g->gc.state != GCSpause);
   lua_assert(o->gch.gct != ~LJ_TTAB);
   gc_debug("lj_gc_barrierf: %p, %p, %d\n", o, v, getage(o));
+  gc_debug6("lj_gc_barrierf: %p, %p, %d\n", o, v, getage(o));
   /* Preserve invariant during propagation. Otherwise it doesn't matter. */
   if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic) {
     gc_mark(g, v);  /* Move frontier forward. */
@@ -1237,7 +1242,7 @@ void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v)
 void LJ_FASTCALL lj_gc_barrieruv(global_State *g, TValue *tv)
 {
   gc_debug("lj_gc_barrieruv: %p\n", gcV(tv));
-  gc_debug5("lj_gc_barrieruv: %p\n", gcV(tv));
+  gc_debug6("lj_gc_barrieruv: %p\n", gcV(tv));
 #define TV2MARKED(x) \
   (*((uint8_t *)(x) - offsetof(GCupval, tv) + offsetof(GCupval, marked)))
   if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
@@ -1273,8 +1278,16 @@ void lj_gc_closeuv(global_State *g, GCupval *uv)
 /* Mark a trace if it's saved during the propagation phase. */
 void lj_gc_barriertrace(global_State *g, uint32_t traceno)
 {
-  if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
+  gc_debug6("lj_gc_barriertrace: %d\n", traceno);
+  if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic) {
     gc_marktrace(g, traceno);
+    GCobj *o = gcref(traceref(G2J(g), traceno)->startpt);
+    if (isold(o)) {
+      GCobj *v = obj2gco(traceref(G2J(g), traceno));
+      lua_assert(!isold(v));
+      setage(v, G_OLD0);
+    }
+  }
 }
 #endif
 
@@ -1292,6 +1305,7 @@ void *lj_mem_realloc(lua_State *L, void *p, GCSize osz, GCSize nsz)
   lua_assert(checkptrGC(p));
   g->gc.total = (g->gc.total - osz) + nsz;
   gc_debug5("lj_mem_realloc: %p\n", p);
+  gc_debug6("lj_mem_realloc: %p\n", p);
   return p;
 }
 
@@ -1309,6 +1323,7 @@ void * LJ_FASTCALL lj_mem_newgco(lua_State *L, GCSize size)
   newwhite(g, o);
   setage(o, G_NEW);
   gc_debug5("lj_mem_newgco: %p\n", o);
+  gc_debug6("lj_mem_newgco: %p\n", o);
   return o;
 }
 

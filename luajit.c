@@ -561,6 +561,7 @@ static int pmain(lua_State *L)
       print_jit_status(L);
       dotty(L);
     } else {
+      //setjitmode(L, LUAJIT_MODE_OFF);
       dofile(L, NULL);  /* Executes stdin as a file. */
     }
   }

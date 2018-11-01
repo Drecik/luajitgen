@@ -47,6 +47,7 @@ GCcdata *lj_cdata_newv(lua_State *L, CTypeID id, CTSize sz, CTSize align)
   cd->marked |= 0x80;
   cd->gct = ~LJ_TCDATA;
   cd->ctypeid = id;
+  gc_debug6("lj_cdata_newv: %p\n", cd);
   return cd;
 }
 
@@ -62,6 +63,7 @@ GCcdata *lj_cdata_newx(CTState *cts, CTypeID id, CTSize sz, CTInfo info)
 /* Free a C data object. */
 void LJ_FASTCALL lj_cdata_free(global_State *g, GCcdata *cd)
 {
+  gc_debug6("lj_cdata_free: %p\n", cd);
   if (LJ_UNLIKELY(cd->marked & LJ_GC_CDATA_FIN)) {
     GCobj *root;
     makewhite(g, obj2gco(cd));
