@@ -1113,6 +1113,7 @@ static void entergen(lua_State *L, global_State *g) {
 
   g->gc.kind = KGC_GEN;
   g->gc.estimate = g->gc.total;
+  g->gc.threshold = (g->gc.total / 100) * (100 + g->gc.genminormul);
   finishgencycle(L, g);
 }
 
