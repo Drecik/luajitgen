@@ -441,7 +441,7 @@ static int pushmode (lua_State *L, int oldmode) {
 LJLIB_CF(collectgarbage)
 {
   int opt = lj_lib_checkopt(L, 1, LUA_GCCOLLECT,  /* ORDER LUA_GC* */
-    "\4stop\7restart\7collect\5count\1\377\4step\10setpause\12setstepmul\1\377\11isrunning\12generational\11incremental");
+    "\4stop\7restart\7collect\5count\1\377\4step\10setpause\12setstepmul\1\377\11isrunning\14generational\13incremental");
   int res;
   switch (opt) {
     case LUA_GCRESTART:
